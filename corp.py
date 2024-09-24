@@ -1,16 +1,32 @@
 import os
 import uuid
 from PIL import Image
+import pyheif  # 新增导入
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter.ttk import Progressbar
+
+def convert_heic_to_jpg(heic_file, output_folder):
+    heif_file = pyheif.read(heic_file)
+    img = Image.frombytes(
+        heif_file.mode,
+        heif_file.size,
+        heif_file.data,
+        "raw",
+        heif_file.mode,
+        heif_file.stride,
+    )
+    unique_filename = str(uuid.uuid4()) + '.jpg'
+    output_path = os.path.join(output_folder, unique_filename)
+    img.save(output_path, "JPEG")
+    return output_path
 
 def crop_images(input_folder, output_folder, top_crop, bottom_crop):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
     # 获取所有图像文件
-    image_files = [f for f in os.listdir(input_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')) and not f.startswith('._')]
+    image_files = [f for f in os.listdir(input_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.heic')) and not f.startswith('._')]
     total_files = len(image_files)
 
     # 更新进度条
@@ -19,6 +35,10 @@ def crop_images(input_folder, output_folder, top_crop, bottom_crop):
     for index, filename in enumerate(image_files):
         img_path = os.path.join(input_folder, filename)
         try:
+            if filename.lower().endswith('.heic'):
+                img_path = convert_heic_to_jpg(img_path, output_folder)  # 转换 HEIC 文件
+                filename = os.path.basename(img_path)  # 更新文件名为转换后的文件名
+
             with Image.open(img_path) as img:
                 width, height = img.size
                 crop_box = (0, top_crop, width, height - bottom_crop)
