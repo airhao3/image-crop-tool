@@ -5,6 +5,11 @@ import pyheif  # 新增导入
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter.ttk import Progressbar
+from openpyxl.drawing.image import Image as ExcelImage  # 新增导入
+import zipfile
+import io
+import threading  # For running tasks in the background
+
 
 def convert_heic_to_jpg(heic_file, output_folder):
     heif_file = pyheif.read(heic_file)
@@ -21,23 +26,22 @@ def convert_heic_to_jpg(heic_file, output_folder):
     img.save(output_path, "JPEG")
     return output_path
 
+
 def crop_images(input_folder, output_folder, top_crop, bottom_crop):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
-    # 获取所有图像文件
     image_files = [f for f in os.listdir(input_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.heic')) and not f.startswith('._')]
     total_files = len(image_files)
 
-    # 更新进度条
     progress_bar['maximum'] = total_files
 
     for index, filename in enumerate(image_files):
         img_path = os.path.join(input_folder, filename)
         try:
             if filename.lower().endswith('.heic'):
-                img_path = convert_heic_to_jpg(img_path, output_folder)  # 转换 HEIC 文件
-                filename = os.path.basename(img_path)  # 更新文件名为转换后的文件名
+                img_path = convert_heic_to_jpg(img_path, output_folder)
+                filename = os.path.basename(img_path)
 
             with Image.open(img_path) as img:
                 width, height = img.size
@@ -49,68 +53,128 @@ def crop_images(input_folder, output_folder, top_crop, bottom_crop):
         except Exception as e:
             print(f"无法处理文件 {filename}: {e}")
 
-        # 更新进度条
+        # Update progress bar and label
         progress_bar['value'] = index + 1
-        progress_label['text'] = f"进度: {index + 1}/{total_files}"  # 更新进度文本
-        root.update_idletasks()  # 更新界面
+        progress_label['text'] = f"进度: {index + 1}/{total_files}"
+        root.update_idletasks()
 
-    messagebox.showinfo("完成", "图像裁剪完成。")
+
+def extract_images_from_excel(input_folder):
+    temp_folder = os.path.join(input_folder, "tmp_storage")
+    if not os.path.exists(temp_folder):
+        os.makedirs(temp_folder)
+
+    excel_files = [f for f in os.listdir(input_folder) if f.lower().endswith('.xlsx')]
+
+    for excel_file in excel_files:
+        zip_file_path = os.path.join(input_folder, excel_file)
+        try:
+            with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+                for file_info in zip_ref.infolist():
+                    if file_info.filename.startswith('xl/media/'):
+                        with zip_ref.open(file_info) as img_file:
+                            img_data = img_file.read()
+                            img = Image.open(io.BytesIO(img_data))
+                            img_path = os.path.join(temp_folder, f"{excel_file}_{file_info.filename.split('/')[-1]}")
+                            img.save(img_path)
+        except Exception as e:
+            print(f"无法处理文件 {excel_file}: {e}")
+
+
+def extract_images():
+    input_folder = input_folder_var.get()
+    if not input_folder:
+        messagebox.showwarning("警告", "请确保选择输入文件夹。")
+        return
+
+    extract_images_from_excel(input_folder)
+    messagebox.showinfo("完成", "图像提取完成，存放在 tmp_storage 文件夹。")
+
 
 def select_input_folder():
-    folder = filedialog.askdirectory()
-    input_folder_var.set(folder)
+    folder_selected = filedialog.askdirectory()
+    if folder_selected:
+        input_folder_var.set(folder_selected)
+
 
 def select_output_folder():
     folder = filedialog.askdirectory()
     output_folder_var.set(folder)
+
 
 def start_cropping():
     input_folder = input_folder_var.get()
     output_folder = output_folder_var.get()
     top_crop = int(top_crop_var.get())
     bottom_crop = int(bottom_crop_var.get())
-    
+
     if not input_folder or not output_folder:
         messagebox.showwarning("警告", "请确保选择输入和输出文件夹。")
         return
 
-    crop_images(input_folder, output_folder, top_crop, bottom_crop)
+    threading.Thread(target=lambda: crop_images(input_folder, output_folder, top_crop, bottom_crop)).start()  # Run cropping in a separate thread
 
-# 创建主窗口
+
+def start_processing():
+    input_folder = input_folder_var.get()
+    output_folder = output_folder_var.get()
+    operation = operation_var.get()
+
+    if not input_folder or not output_folder:
+        messagebox.showwarning("警告", "请确保选择输入和输出文件夹。")
+        return
+
+    if operation in ["提取图像", "均需执行"]:
+        threading.Thread(target=lambda: extract_images_from_excel(input_folder)).start()
+    if operation in ["进行剪裁", "均需执行"]:
+        threading.Thread(target=lambda: crop_images(input_folder, output_folder, int(top_crop_var.get()), int(bottom_crop_var.get()))).start()
+    if operation == "图像格式转换":
+        threading.Thread(target=lambda: convert_image_format(input_folder, output_folder)).start()
+
+
+# Create main window
 root = tk.Tk()
-root.title("图像裁剪工具")
+root.title("图像处理工具")
 
-# 输入文件夹选择
+# Input folder
+tk.Label(root, text="选择文件或路径:").grid(row=0, column=0, padx=10, pady=10)
 input_folder_var = tk.StringVar()
-tk.Label(root, text="输入文件夹:").grid(row=0, column=0)
-tk.Entry(root, textvariable=input_folder_var, width=50).grid(row=0, column=1)
-tk.Button(root, text="选择", command=select_input_folder).grid(row=0, column=2)
+input_folder_entry = tk.Entry(root, textvariable=input_folder_var, width=50)
+input_folder_entry.grid(row=0, column=1, padx=10, pady=10)
+tk.Button(root, text="选择文件夹", command=select_input_folder).grid(row=0, column=2, padx=10, pady=10)
 
-# 输出文件夹选择
+# Operation selection
+tk.Label(root, text="选择操作:").grid(row=1, column=0, padx=10, pady=10)
+operation_var = tk.StringVar(value="提取图像")
+operation_options = ["提取图像", "进行剪裁", "图像格式转换", "均需执行"]
+operation_menu = tk.OptionMenu(root, operation_var, *operation_options)
+operation_menu.grid(row=1, column=1, padx=10, pady=10)
+
+# Output folder
+tk.Label(root, text="存放路径:").grid(row=2, column=0, padx=10, pady=10)
 output_folder_var = tk.StringVar()
-tk.Label(root, text="输出文件夹:").grid(row=1, column=0)
-tk.Entry(root, textvariable=output_folder_var, width=50).grid(row=1, column=1)
-tk.Button(root, text="选择", command=select_output_folder).grid(row=1, column=2)
+output_folder_entry = tk.Entry(root, textvariable=output_folder_var, width=50)
+output_folder_entry.grid(row=2, column=1, padx=10, pady=10)
+tk.Button(root, text="选择存放路径", command=select_output_folder).grid(row=2, column=2, padx=10, pady=10)
 
-# 裁剪参数输入
-top_crop_var = tk.StringVar(value="50")
-tk.Label(root, text="上边界裁剪像素数:").grid(row=2, column=0)
-tk.Entry(root, textvariable=top_crop_var, width=10).grid(row=2, column=1)
+# Crop settings
+tk.Label(root, text="上裁剪像素:").grid(row=3, column=0, padx=10, pady=10)
+top_crop_var = tk.StringVar(value="0")
+top_crop_entry = tk.Entry(root, textvariable=top_crop_var)
+top_crop_entry.grid(row=3, column=1, padx=10, pady=10)
 
-bottom_crop_var = tk.StringVar(value="50")
-tk.Label(root, text="下边界裁剪像素数:").grid(row=3, column=0)
-tk.Entry(root, textvariable=bottom_crop_var, width=10).grid(row=3, column=1)
+tk.Label(root, text="下裁剪像素:").grid(row=4, column=0, padx=10, pady=10)
+bottom_crop_var = tk.StringVar(value="0")
+bottom_crop_entry = tk.Entry(root, textvariable=bottom_crop_var)
+bottom_crop_entry.grid(row=4, column=1, padx=10, pady=10)
 
-# 进度条
-progress_bar = Progressbar(root, orient='horizontal', length=400, mode='determinate')
-progress_bar.grid(row=5, column=0, columnspan=3, pady=10)
-
-# 进度标签
+# Progress bar
+progress_bar = Progressbar(root, length=300)
+progress_bar.grid(row=5, column=1, padx=10, pady=10)
 progress_label = tk.Label(root, text="进度: 0/0")
-progress_label.grid(row=6, column=0, columnspan=3)
+progress_label.grid(row=6, column=1, padx=10, pady=10)
 
-# 开始裁剪按钮
-tk.Button(root, text="开始裁剪", command=start_cropping).grid(row=4, column=1)
+# Start processing button
+tk.Button(root, text="执行操作", command=start_processing).grid(row=7, column=1, padx=10, pady=10)
 
-# 运行主循环
 root.mainloop()
